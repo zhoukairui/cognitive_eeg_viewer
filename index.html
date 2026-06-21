@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>老年认知EEG - Track示波器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Arial,sans-serif}
+body{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#e6e6e6;min-height:100vh;padding:10px}
+.container{max-width:100%;margin:0 auto}
+header{text-align:center;padding:15px 0;border-bottom:1px solid rgba(255,255,255,0.1);margin-bottom:10px}
+h1{font-size:1.5rem;color:#4cc9f0;text-shadow:0 0 10px rgba(76,201,240,0.5)}
+.status-bar{display:flex;justify-content:space-between;background:rgba(0,0,0,0.3);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:0.9rem;flex-wrap:wrap;gap:4px}
+.control-panel{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.tip-box{background:rgba(247,37,133,0.2);border-left:4px solid #f72585;padding:8px 12px;border-radius:4px;margin-bottom:10px;font-size:0.85rem;line-height:1.4}
+button{background:linear-gradient(to right,#4361ee,#3a0ca3);color:#fff;border:none;padding:8px 6px;border-radius:8px;font-weight:bold;cursor:pointer;transition:all 0.3s;font-size:0.85rem;white-space:nowrap}
+button:active{transform:scale(0.97)}
+button:disabled{background:#555;cursor:not-allowed}
+button.danger{background:linear-gradient(to right,#e63946,#c1121f)}
+button.success{background:linear-gradient(to right,#2ec4b6,#007f5f)}
+button.warning{background:linear-gradient(to right,#f77f00,#d62828)}
+.filter-panel{background:rgba(0,0,0,0.3);border-radius:8px;padding:12px;margin-bottom:10px}
+.filter-group h3{font-size:0.95rem;margin-bottom:6px;color:#f72585}
+.filter-controls{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.filter-btn{padding:5px 10px;background:rgba(255,255,255,0.1);font-size:0.8rem;border:none;border-radius:6px;color:#e6e6e6;cursor:pointer}
+.filter-btn.active{background:linear-gradient(to right,#f72585,#b5179e)}
+input[type="number"]{width:55px;padding:5px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.3);border-radius:5px;color:#fff;font-size:0.8rem}
+input[type="file"]{display:none}
+.connection-status{display:inline-flex;align-items:center;gap:5px}
+.status-dot{width:10px;height:10px;border-radius:50%;background:#ff4757}
+.status-dot.connected{background:#2ed573;animation:pulse 2s infinite}
+@keyframes pulse{0%{opacity:1}50%{opacity:0.5}100%{opacity:1}}
+.data-info{font-size:0.8rem;opacity:0.8}
+/* ── 左右分栏绘图结构 ── */
+.plot-area{display:flex;gap:0;margin-bottom:10px;background:rgba(0,0,0,0.25);border-radius:8px;padding:5px;min-height:0}
+.channel-labels{display:flex;flex-direction:column;flex-shrink:0;justify-content:space-around;padding:4px 6px 30px 4px;width:72px;user-select:none}
+.channel-labels .cl-item{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;line-height:1.3}
+.channel-labels .cl-name{font-size:0.82rem;font-weight:bold}
+.channel-labels .cl-value{font-size:0.65rem;color:#aaa;font-family:Consolas,monospace}
+#mainCanvas{flex:1;display:block;border-radius:4px;background:#0a0a18;cursor:crosshair}
+.range-row{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:0 4px}
+.range-row label{font-size:0.8rem;color:#aaa;margin-right:4px}
+.range-btn{padding:3px 10px;font-size:0.72rem;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:10px;color:#ccc;cursor:pointer}
+.range-btn.active{background:#4cc9f0;color:#000}
+footer{text-align:center;padding:12px;font-size:0.75rem;opacity:0.7;border-top:1px solid rgba(255,255,255,0.1);margin-top:10px}
+.log-box{width:100%;min-height:100px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:8px;color:#a7f3d0;font-family:Consolas,monospace;font-size:10px;resize:vertical;margin-bottom:10px}
+.file-name{font-size:0.78rem;color:#aaa;margin-bottom:6px}
+@media(max-width:768px){
+  .control-panel{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="container">
+<header><h1>老年认知EEG · Track示波器</h1></header>
+<div class="tip-box" id="preCheckTip"></div>
+<div class="status-bar">
+<div class="connection-status">
+<span class="status-dot" id="statusDot"></span>
+<span id="connectionStatus">未连接</span>
+</div>
+<div class="data-info" id="dataInfo"><span>等待数据...</span></div>
+</div>
+<div class="control-panel">
+<button id="scanBtn">扫描设备</button>
+<button id="connectBtn" disabled>连接</button>
+<button id="disconnectBtn" class="danger" disabled>断开</button>
+<button id="startBtn" class="success" disabled>开始采集</button>
+<button id="stopBtn" class="danger" disabled>停止采集</button>
+<button id="loadFileBtn" class="warning">加载离线文件</button>
+<button id="exportBtn">导出日志</button>
+<button id="clearBtn">新建会话</button>
+</div>
+<input type="file" id="fileInput" accept=".txt">
+<div class="file-name" id="fileName"></div>
+
+<!-- 滤波 -->
+<div class="filter-panel">
+<div class="filter-group">
+<h3>EEG 滤波（连续滤波，采集全程不中断）</h3>
+<div class="filter-controls">
+<button class="filter-btn" id="eegHpBtn">0.5Hz 高通</button>
+<button class="filter-btn" id="eegLpBtn">低通</button>
+<input type="number" id="eegLpFreq" value="30" min="1" max="100">
+<button class="filter-btn" id="eegNotchBtn">50Hz 陷波</button>
+<button class="filter-btn" id="eegNotch60Btn">60Hz 陷波</button>
+</div>
+</div>
+</div>
+
+<!-- 日志 -->
+<textarea class="log-box" id="logBox" readonly placeholder="运行日志..."></textarea>
+
+<!-- 全局量程 -->
+<div class="range-row" id="globalRangeRow">
+<label>量程(μV/格):</label>
+</div>
+
+<!-- 左右分栏绘图结构 -->
+<div class="plot-area">
+<div class="channel-labels" id="channelLabels"></div>
+<canvas id="mainCanvas"></canvas>
+</div>
+
+<footer><p>基于 Web Bluetooth | 兼容 Chrome/Edge | COGNITIVE 设备</p></footer>
+</div>
+<script>
+// ==================== 设备参数 ====================
+const N_CHANNELS = 4;
+const CHANNEL_NAMES = ['CH1','CH2','CH3','CH4'];
+const CHANNEL_COLORS = ['#ff4444','#44ff44','#4488ff','#ff44ff'];
+const CHANNEL_BG = ['rgba(255,68,68,0.06)','rgba(68,255,68,0.06)','rgba(68,136,255,0.06)','rgba(255,68,255,0.06)'];
+const EEG_FS = 250, SHOW_SECONDS = 10;
+const EEG_POINTS = EEG_FS * SHOW_SECONDS;
+const RANGE_VALUES = [50,100,200,500,1000,2000];
+
+const SERVICE_UUID = "0000ff01-0000-1000-8000-00805f9b34fb";
+
+const CMD_START    = new Uint8Array([0x00, 0x00, 0x08]);
+const CMD_STOP     = new Uint8Array([0x00, 0x00, 0x0A]);
+const CMD_RDATAC   = new Uint8Array([0x00, 0x00, 0x10]);
+const CMD_SDATAC   = new Uint8Array([0x00, 0x00, 0x11]);
+
+const VREF = 4.5, GAIN = 24;
+const LSB = VREF / (1 << 23) / GAIN;
+const EEG_UV_CONVERT = LSB * 1e-3 * 1e6 * 1e3;
+
+function toSigned24(v) { return v > 8388607 ? v - 16777216 : v; }
+
+// ==================== 前置检查 ====================
+function preCheck() {
+  const el = document.getElementById('preCheckTip');
+  let canBLE = true;
+  if (!navigator.bluetooth) { el.innerHTML = '浏览器不支持 Web Bluetooth，请使用 Chrome/Edge'; canBLE = false; }
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1')
+    el.innerHTML = '非 HTTPS 环境，需通过 HTTPS 或 localhost 访问';
+  if (canBLE && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
+    { el.innerHTML = '环境检测通过，可扫描 COGNITIVE 设备'; el.style.background='rgba(46,213,115,0.2)'; el.style.borderLeftColor='#2ed573'; }
+}
+
+// ==================== 数据解析 ====================
+function parseEegSinglePacket(dataBytes) {
+  return [
+    toSigned24((dataBytes[0]<<16)|(dataBytes[1]<<8)|dataBytes[2]) * EEG_UV_CONVERT,
+    toSigned24((dataBytes[3]<<16)|(dataBytes[4]<<8)|dataBytes[5]) * EEG_UV_CONVERT,
+    toSigned24((dataBytes[6]<<16)|(dataBytes[7]<<8)|dataBytes[8]) * EEG_UV_CONVERT,
+    toSigned24((dataBytes[9]<<16)|(dataBytes[10]<<8)|dataBytes[11]) * EEG_UV_CONVERT
+  ];
+}
+const PKT_LEN = 15;
+function parseEegBuffer(buffer) {
+  const r = [];
+  for (let i = 0; i <= buffer.length - PKT_LEN; ) {
+    if (buffer[i] === 0xC0) { r.push(parseEegSinglePacket(buffer.slice(i+3, i+15))); i += PKT_LEN; }
+    else i++;
+  }
+  return r;
+}
+
+// ==================== 滤波器 ====================
+class DigitalFilter {
+  constructor(b,a){this.b=b.slice();this.a=a.slice();this.xs=new Array(b.length).fill(0);this.ys=new Array(a.length-1).fill(0)}
+  process(x){
+    if(!Number.isFinite(x))return x;
+    this.xs.unshift(x);this.xs.pop();
+    let y=0;for(let i=0;i<this.b.length;i++)y+=this.b[i]*this.xs[i];
+    for(let i=1;i<this.a.length;i++)y-=this.a[i]*this.ys[i-1];
+    y/=this.a[0];this.ys.unshift(y);this.ys.pop();return y;
+  }
+  reset(){this.xs.fill(0);this.ys.fill(0)}
+}
+function butterLp(fs,fc){const w0=2*Math.PI*fc/fs,cosw=Math.cos(w0),sinw=Math.sin(w0),a=sinw/Math.SQRT2,a0=1+a;return {b:[(1-cosw)/2/a0,(1-cosw)/a0,(1-cosw)/2/a0],a:[1,-2*cosw/a0,(1-a)/a0]}}
+function butterHp(fs,fc){const w0=2*Math.PI*fc/fs,cosw=Math.cos(w0),sinw=Math.sin(w0),a=sinw/Math.SQRT2,a0=1+a;return {b:[(1+cosw)/2/a0,-(1+cosw)/a0,(1+cosw)/2/a0],a:[1,-2*cosw/a0,(1-a)/a0]}}
+function iirNotch(fs,freq,q){q=q||30;const w0=2*Math.PI*freq/fs,cosw=Math.cos(w0),sinw=Math.sin(w0),a=sinw/(2*q),a0=1+a;return {b:[1/a0,-2*cosw/a0,1/a0],a:[1,-2*cosw/a0,(1-a)/a0]}}
+
+// ==================== 状态 ====================
+const S = {
+  device:null,server:null,notifyCh:null,writeCh:null,
+  connected:false,collecting:false,pktCount:0,
+  eegHp:false,eegLp:false,eegLpF:30,eegNotch:false,notchFreq:50,
+  rangeUvPerDiv:200  // 每格微伏数（量程）
+};
+const filters = {};
+function recreateFilters(){
+  const fs=EEG_FS;
+  for(let i=0;i<N_CHANNELS;i++){
+    filters[`hp${i}`]=S.eegHp?new DigitalFilter(butterHp(fs,0.5).b,butterHp(fs,0.5).a):null;
+    filters[`lp${i}`]=S.eegLp?new DigitalFilter(butterLp(fs,S.eegLpF).b,butterLp(fs,S.eegLpF).a):null;
+    filters[`notch${i}`]=S.eegNotch?new DigitalFilter(iirNotch(fs,S.notchFreq).b,iirNotch(fs,S.notchFreq).a):null;
+  }
+}
+function resetFilters(){for(const k in filters){const f=filters[k];if(f)f.reset()}}
+
+// ==================== Canvas 渲染引擎 ====================
+const canvas = document.getElementById('mainCanvas');
+const ctx = canvas.getContext('2d');
+let W=0, H=0;
+let dpr=1;
+// 布局常量
+const PAD_L = 10;         // 画布左侧内边距(含标尺)
+const X_PAD = 8;          // 右侧留白
+const X_AXIS_HEIGHT = 24; // X轴标签区域高度(CSS px)
+
+function rebuildChannelLabels() {
+  const div = document.getElementById('channelLabels');
+  if (!div) return;
+  div.innerHTML = '';
+  for (let i = 0; i < N_CHANNELS; i++) {
+    const item = document.createElement('div');
+    item.className = 'cl-item';
+    item.innerHTML = `<span class="cl-name" style="color:${CHANNEL_COLORS[i]}">${CHANNEL_NAMES[i]}</span>`
+                   + `<span class="cl-value" id="val${i}">--</span>`;
+    div.appendChild(item);
+  }
+}
+
+function resizeCanvas() {
+  dpr = window.devicePixelRatio || 1;
+  // 动态计算通道高度：随通道数自适应
+  const chH_css = Math.max(70, Math.min(140, Math.floor(560 / N_CHANNELS)));
+  const cssH = N_CHANNELS * chH_css + X_AXIS_HEIGHT;
+  canvas.style.height = cssH + 'px';
+  // 由 flex 决定宽度，读取实际渲染宽度
+  const cssW = canvas.clientWidth;
+  if (cssW === 0) return;
+  W = Math.floor(cssW * dpr);
+  H = Math.floor(cssH * dpr);
+  canvas.width = W;
+  canvas.height = H;
+  draw();
+}
+
+window.addEventListener('resize', resizeCanvas);
+
+// 环形缓冲区（唯一数据源）
+let scopeBufs = [];
+let scopeCursors = [];
+function initScopeBufs() {
+  scopeBufs = [];
+  scopeCursors = [];
+  for (let i = 0; i < N_CHANNELS; i++) {
+    scopeBufs.push(new Float64Array(EEG_POINTS));
+    scopeCursors.push(0);
+  }
+}
+
+// 计算每个 track 的垂直位置
+function getTrackLayout() {
+  const plotH = H - X_AXIS_HEIGHT * dpr;
+  const trackH = plotH / N_CHANNELS;
+  const baselines = [];
+  for (let i = 0; i < N_CHANNELS; i++) {
+    baselines.push((i + 0.5) * trackH);
+  }
+  return { trackH, baselines };
+}
+
+// uV -> canvas Y (全局量程)
+// gain = (chHeight * 0.38) / rangeMicroVolts
+// y = baselineY - voltage * gain
+let g_trackH = 0;
+let g_baselines = [];
+
+function uvToPx(uv, chIdx) {
+  const gain = (g_trackH * 0.38) / S.rangeUvPerDiv;
+  return g_baselines[chIdx] - uv * gain;
+}
+
+// 绘制背景网格（通道底色 + 基线 + 自适应三级时间网格）
+function drawGrid() {
+  const x0 = PAD_L * dpr;
+  const x1 = W - X_PAD * dpr;
+  const plotW = x1 - x0;
+  const plotH = N_CHANNELS * g_trackH;
+
+  ctx.save();
+
+  // 通道区域底色
+  for (let i = 0; i < N_CHANNELS; i++) {
+    ctx.fillStyle = CHANNEL_BG[i];
+    ctx.fillRect(x0, g_baselines[i] - g_trackH / 2, plotW, g_trackH);
+  }
+
+  // 水平网格线：基线 + 半程线
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 0.5 * dpr;
+
+  for (let i = 0; i < N_CHANNELS; i++) {
+    const bl = g_baselines[i];
+    const half = g_trackH / 2;
+    // 基线
+    ctx.globalAlpha = 0.15;
+    ctx.beginPath(); ctx.moveTo(x0, bl); ctx.lineTo(x1, bl); ctx.stroke();
+    // 半程线（弱）
+    ctx.globalAlpha = 0.07;
+    ctx.beginPath(); ctx.moveTo(x0, bl - half); ctx.lineTo(x1, bl - half);
+    ctx.moveTo(x0, bl + half); ctx.lineTo(x1, bl + half);
+    ctx.stroke();
+  }
+
+  // ── 自适应垂直三级网格（参考 index.html） ──
+  let gridStep, labelStep;
+  if (SHOW_SECONDS <= 2)      { gridStep = 0.01; labelStep = 0.1; }
+  else if (SHOW_SECONDS <= 5) { gridStep = 0.05; labelStep = 0.5; }
+  else if (SHOW_SECONDS <= 10){ gridStep = 0.1;  labelStep = 1;   }
+  else if (SHOW_SECONDS <= 30){ gridStep = 0.5;  labelStep = 5;   }
+  else                        { gridStep = 1;    labelStep = 10;  }
+
+  const nGrids = Math.round(SHOW_SECONDS / gridStep);
+  const halfStep = gridStep * 5;
+  const labelEvery = Math.round(labelStep / gridStep);
+
+  for (let i = 1; i <= nGrids; i++) {
+    const x = x0 + (i * gridStep / SHOW_SECONDS) * plotW;
+    if (i % labelEvery === 0) {
+      ctx.globalAlpha = 0.15;
+    } else if (halfStep > 0 && (i * gridStep) % halfStep === 0) {
+      ctx.globalAlpha = 0.08;
+    } else {
+      ctx.globalAlpha = 0.04;
+    }
+    ctx.strokeStyle = '#888';
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, plotH); ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// 绘制左侧量程标尺（精简版 — 仅垂直标尺杆 + 刻度线）
+function drawRangeScale() {
+  ctx.save();
+  const rulerX = PAD_L * dpr + 2 * dpr;
+  const rulerW = 4 * dpr;
+  const nTicks = 5;
+
+  for (let i = 0; i < N_CHANNELS; i++) {
+    const bl = g_baselines[i];
+    const half = g_trackH / 2;
+    const range = S.rangeUvPerDiv;
+
+    // 垂直标尺杆
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(rulerX, bl - half);
+    ctx.lineTo(rulerX, bl + half);
+    ctx.stroke();
+
+    // 刻度线 + 值标签
+    ctx.font = `${Math.round(7 * dpr)}px Consolas,monospace`;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#999';
+
+    for (let t = 0; t < nTicks; t++) {
+      const frac = (t - (nTicks - 1) / 2) / ((nTicks - 1) / 2);
+      const y = bl - frac * half;
+      const val = Math.round(frac * range);
+      ctx.strokeStyle = val === 0 ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = val === 0 ? 1.5 * dpr : 1 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(rulerX, y);
+      ctx.lineTo(rulerX + rulerW, y);
+      ctx.stroke();
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = val === 0 ? '#bbb' : '#999';
+      ctx.fillText(val, rulerX + rulerW + 2 * dpr, y);
+    }
+  }
+  ctx.restore();
+}
+
+// 绘制底部时间刻度（三级刻度线 + 标签）
+function drawTimeScale() {
+  ctx.save();
+  const x0 = PAD_L * dpr;
+  const x1 = W - X_PAD * dpr;
+  const plotW = x1 - x0;
+  const plotH = N_CHANNELS * g_trackH;
+
+  // 与网格系统同步的自适应步长
+  let gridStep, labelStep;
+  if (SHOW_SECONDS <= 2)      { gridStep = 0.01; labelStep = 0.1; }
+  else if (SHOW_SECONDS <= 5) { gridStep = 0.05; labelStep = 0.5; }
+  else if (SHOW_SECONDS <= 10){ gridStep = 0.1;  labelStep = 1;   }
+  else if (SHOW_SECONDS <= 30){ gridStep = 0.5;  labelStep = 5;   }
+  else                        { gridStep = 1;    labelStep = 10;  }
+
+  const nGrids = Math.round(SHOW_SECONDS / gridStep);
+  const halfStep = gridStep * 5;
+  const labelEvery = Math.round(labelStep / gridStep);
+
+  ctx.font = `${Math.round(9 * dpr)}px Consolas,monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  for (let i = 0; i <= nGrids; i++) {
+    const t = i * gridStep;
+    const x = x0 + (t / SHOW_SECONDS) * plotW;
+
+    if (i % labelEvery === 0) {
+      // 长刻度 + 标签
+      ctx.fillStyle = '#888';
+      ctx.fillText(labelStep >= 1 ? t + 's' : t.toFixed(1) + 's', x, plotH + 4 * dpr);
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(x, plotH);
+      ctx.lineTo(x, plotH + 6 * dpr);
+      ctx.stroke();
+    } else if (halfStep > 0 && t % halfStep === 0) {
+      // 中刻度
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(x, plotH);
+      ctx.lineTo(x, plotH + 4 * dpr);
+      ctx.stroke();
+    } else {
+      // 短刻度
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(x, plotH);
+      ctx.lineTo(x, plotH + 2 * dpr);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+// 绘制通道数据（纯波形，无背景填充）
+function drawTraces() {
+  const x0 = PAD_L * dpr;
+  const x1 = W - X_PAD * dpr;
+  const plotW = x1 - x0;
+
+  ctx.save();
+
+  for (let ch = 0; ch < N_CHANNELS; ch++) {
+    const buf = scopeBufs[ch];
+    const cursor = scopeCursors[ch];
+    ctx.strokeStyle = CHANNEL_COLORS[ch];
+    ctx.lineWidth = 1.2 * dpr;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    let first = true;
+
+    // 从 cursor 到末尾（旧数据）
+    if (cursor > 0) {
+      const lenOld = EEG_POINTS - cursor;
+      for (let i = 0; i < lenOld; i++) {
+        const x = x0 + i / EEG_POINTS * plotW;
+        const y = uvToPx(buf[cursor + i], ch);
+        if (first) { ctx.moveTo(x, y); first = false; }
+        else ctx.lineTo(x, y);
+      }
+      // 从 0 到 cursor（新数据）
+      for (let i = 0; i < cursor; i++) {
+        const x = x0 + (lenOld + i) / EEG_POINTS * plotW;
+        const y = uvToPx(buf[i], ch);
+        if (first) { ctx.moveTo(x, y); first = false; }
+        else ctx.lineTo(x, y);
+      }
+    } else {
+      // 未回绕：全部连续
+      for (let i = 0; i < EEG_POINTS; i++) {
+        if (buf[i] === 0 && i === EEG_POINTS - 1) break; // 跳过空白
+        const x = x0 + i / EEG_POINTS * plotW;
+        const y = uvToPx(buf[i], ch);
+        if (first) { ctx.moveTo(x, y); first = false; }
+        else ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function draw() {
+  if (W === 0 || H === 0) return;
+  const layout = getTrackLayout();
+  g_trackH = layout.trackH;
+  g_baselines = layout.baselines;
+
+  // 1. 清空画布
+  ctx.clearRect(0, 0, W, H);
+
+  // 2. 画布整体背景
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, W, H);
+
+  // 3. 绘制背景网格（通道底色 + 基线 + 时间网格线）
+  drawGrid();
+
+  // 4. 逐通道绘制波形
+  drawTraces();
+
+  // 5. 绘制左侧量程标尺 + 底部时间刻度
+  drawRangeScale();
+  drawTimeScale();
+}
+
+let redrawPending = false;
+function scheduleRedraw() {
+  if (redrawPending) return;
+  redrawPending = true;
+  requestAnimationFrame(() => { redrawPending = false; draw(); });
+}
+
+// ==================== BLE ====================
+function updateUI() {
+  document.getElementById('connectionStatus').textContent = S.connected?`已连接 ${S.device?.name||''}`:'未连接';
+  document.getElementById('statusDot').className='status-dot'+(S.connected?' connected':'');
+  document.getElementById('connectBtn').disabled=!S.device||S.connected;
+  document.getElementById('disconnectBtn').disabled=!S.connected;
+  document.getElementById('startBtn').disabled=!S.connected||S.collecting;
+  document.getElementById('stopBtn').disabled=!S.connected||!S.collecting;
+}
+
+function log(msg){
+  const t=new Date().toLocaleTimeString();
+  const box=document.getElementById('logBox');
+  box.value+=`[${t}] ${msg}\n`;box.scrollTop=box.scrollHeight;
+}
+
+let rawLog=[];
+
+async function doScan(){
+  try{
+    const d=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[SERVICE_UUID]});
+    S.device=d;d.addEventListener('gattserverdisconnected',onDC);
+    log(`找到设备: ${d.name||'未知'} [${d.id}]`);updateUI();
+  }catch(e){if(e.name==='NotAllowedError')log('用户取消选择');else log(`扫描失败: ${e.message}`)}
+}
+
+async function doConnect(){
+  if(!S.device)return;
+  try{
+    log('连接中...');S.server=await S.device.gatt.connect();
+    let svc;
+    try{svc=await S.server.getPrimaryService(SERVICE_UUID);}catch(e){
+      const svcs=await S.server.getPrimaryServices();
+      for(const s of svcs){if(s.uuid.toLowerCase()===SERVICE_UUID.toLowerCase()){svc=s;break}}
+      if(!svc)throw new Error('未找到目标服务 '+SERVICE_UUID);
+    }
+    const chars=await svc.getCharacteristics();
+    for(const ch of chars){
+      const u=ch.uuid.toLowerCase();
+      if(u.includes('ff01')||u.includes('ffe1')||u.includes('ffe0')){
+        if(ch.properties.notify&&!S.notifyCh)S.notifyCh=ch;
+        if((ch.properties.write||ch.properties.writeWithoutResponse)&&!S.writeCh)S.writeCh=ch;
+      }
+    }
+    if(!S.notifyCh){for(const ch of chars){if(ch.properties.notify){S.notifyCh=ch;break}}}
+    if(!S.writeCh){for(const ch of chars){if(ch.properties.write||ch.properties.writeWithoutResponse){S.writeCh=ch;break}}}
+    if(!S.notifyCh)throw new Error('未找到可通知的特征');
+    if(!S.writeCh)S.writeCh=S.notifyCh;
+    await S.notifyCh.startNotifications();S.notifyCh.addEventListener('characteristicvaluechanged',onData);
+    S.connected=true;log(`蓝牙已连接 (通知:${S.notifyCh.uuid} 写入:${S.writeCh.uuid})`);updateUI();
+  }catch(e){log(`连接失败: ${e.message}`)}
+}
+
+function onDC(){S.connected=false;S.collecting=false;S.server=null;S.notifyCh=null;S.writeCh=null;log('蓝牙已断开');updateUI();}
+async function doDisconnect(){if(S.device?.gatt?.connected)S.device.gatt.disconnect();onDC();}
+
+async function writeCmd(cmd){
+  if(!S.writeCh)return;
+  try{if(S.writeCh.writeValueWithoutResponse)await S.writeCh.writeValueWithoutResponse(cmd);else await S.writeCh.writeValue(cmd);}
+  catch(e){log(`指令失败: ${e.message}`)}
+}
+async function doStart(){fullReset();await writeCmd(CMD_START);await new Promise(r=>setTimeout(r,100));await writeCmd(CMD_RDATAC);S.collecting=true;log('开始采集');updateUI();}
+async function doStop(){await writeCmd(CMD_STOP);await new Promise(r=>setTimeout(r,100));await writeCmd(CMD_SDATAC);S.collecting=false;log('停止采集');updateUI();}
+
+function fullReset(){
+  for(let i=0;i<N_CHANNELS;i++)scopeBufs[i].fill(0);
+  for(let i=0;i<N_CHANNELS;i++)scopeCursors[i]=0;
+  S.pktCount=0;resetFilters();scheduleRedraw();
+}
+
+let eegBuffer=[];
+
+function onData(ev){
+  const raw=new Uint8Array(ev.target.value.buffer);
+  if(!raw.length)return;
+  rawLog.push(`${new Date().toISOString()},${Array.from(raw).map(x=>x.toString(16).padStart(2,'0')).join('')}`);
+  try{
+    eegBuffer.push(...raw);
+    const rows=parseEegBuffer(eegBuffer);
+    if(rows.length>0){
+      let lastComplete=0;
+      for(let i=0;i<=eegBuffer.length-PKT_LEN;i++){if(eegBuffer[i]===0xC0)lastComplete=i+PKT_LEN;}
+      if(lastComplete>0)eegBuffer.splice(0,lastComplete);
+      S.pktCount+=rows.length;
+      for(const pkt of rows){
+        let vals=pkt.slice();
+        for(let ch=0;ch<N_CHANNELS;ch++){
+          if(filters[`hp${ch}`])vals[ch]=filters[`hp${ch}`].process(vals[ch]);
+          if(filters[`lp${ch}`])vals[ch]=filters[`lp${ch}`].process(vals[ch]);
+          if(filters[`notch${ch}`])vals[ch]=filters[`notch${ch}`].process(vals[ch]);
+          scopeBufs[ch][scopeCursors[ch]]=vals[ch];
+        }
+        for(let ch=0;ch<N_CHANNELS;ch++){
+          scopeCursors[ch]++;if(scopeCursors[ch]>=EEG_POINTS)scopeCursors[ch]=0;
+        }
+      }
+      const lastVal=rows[rows.length-1];
+      for(let ch=0;ch<N_CHANNELS;ch++)document.getElementById(`val${ch}`).textContent=lastVal[ch].toFixed(1);
+      document.getElementById('dataInfo').innerHTML=`包:${S.pktCount} &nbsp; 游标:${scopeCursors[0]} &nbsp; 量程:${S.rangeUvPerDiv}μV/格`;
+      scheduleRedraw();
+    }
+  }catch(e){log(`解析错误: ${e.message}`)}
+}
+
+// ==================== 离线文件 ====================
+function loadOfflineFile(){document.getElementById('fileInput').click();}
+function handleFileSelect(ev){
+  const file=ev.target.files[0];if(!file)return;
+  document.getElementById('fileName').textContent='已加载: '+file.name;
+  const reader=new FileReader();
+  reader.onload=function(e){parseOfflineData(e.target.result);};
+  reader.readAsText(file,'utf-8');
+}
+function parseOfflineData(text){
+  fullReset();const lines=text.split('\n');let count=0;
+  for(const line of lines){
+    const sp=line.trim().split(',');if(sp.length<2)continue;
+    const hexStr=sp[1].toUpperCase();
+    for(let i=0;i<hexStr.length;i+=PKT_LEN*2){
+      const pktHex=hexStr.substring(i,i+PKT_LEN*2);if(pktHex.length<PKT_LEN*2)break;
+      if(!pktHex.startsWith('C0'))continue;
+      const bArr=[];for(let j=0;j<pktHex.length;j+=2)bArr.push(parseInt(pktHex.substring(j,j+2),16));
+      if(bArr.length<PKT_LEN||bArr[0]!==0xC0)continue;
+      const eeg=parseEegSinglePacket(bArr.slice(3,15));
+      for(let ch=0;ch<N_CHANNELS;ch++)scopeBufs[ch][count]=eeg[ch];
+      count++;if(count>=EEG_POINTS)break;
+    }if(count>=EEG_POINTS)break;
+  }
+  const wp=count>=EEG_POINTS?0:count;
+  for(let ch=0;ch<N_CHANNELS;ch++)scopeCursors[ch]=wp;
+  log(`已加载 ${count} 个数据点`);scheduleRedraw();
+}
+
+// ==================== 导出 & 清空 ====================
+function doExport(){
+  if(!rawLog.length){log('无数据可导出');return;}
+  const blob=new Blob([rawLog.join('\n')],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;
+  a.download=`eeg_cognitive_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+  a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
+  log(`导出 ${rawLog.length} 条记录`);
+}
+function clearSession(){
+  if(!confirm('清除所有数据？'))return;
+  rawLog=[];eegBuffer=[];
+  for(let i=0;i<N_CHANNELS;i++)scopeBufs[i].fill(0);
+  for(let i=0;i<N_CHANNELS;i++)scopeCursors[i]=0;
+  S.pktCount=0;resetFilters();
+  document.getElementById('dataInfo').innerHTML='等待数据...';
+  document.getElementById('fileName').textContent='';
+  for(let i=0;i<N_CHANNELS;i++)document.getElementById(`val${i}`).textContent='--';
+  scheduleRedraw();log('会话已清除');
+}
+
+// ==================== 滤波 UI ====================
+function toggleFilter(btnId,stateKey){
+  document.getElementById(btnId).classList.toggle('active');
+  S[stateKey]=document.getElementById(btnId).classList.contains('active');
+  recreateFilters();
+}
+document.getElementById('eegHpBtn').onclick=()=>toggleFilter('eegHpBtn','eegHp');
+document.getElementById('eegLpBtn').onclick=()=>{
+  document.getElementById('eegLpBtn').classList.toggle('active');
+  S.eegLp=document.getElementById('eegLpBtn').classList.contains('active');
+  S.eegLpF=Number(document.getElementById('eegLpFreq').value)||30;recreateFilters();
+};
+document.getElementById('eegLpFreq').onchange=()=>{S.eegLpF=Number(document.getElementById('eegLpFreq').value)||30;if(S.eegLp)recreateFilters();};
+document.getElementById('eegNotchBtn').onclick=()=>{S.notchFreq=50;toggleFilter('eegNotchBtn','eegNotch');};
+document.getElementById('eegNotch60Btn').onclick=()=>{S.notchFreq=60;toggleFilter('eegNotch60Btn','eegNotch');};
+
+// ==================== 全局量程按钮 ====================
+function buildRangeButtons(){
+  const row=document.getElementById('globalRangeRow');
+  RANGE_VALUES.forEach(v=>{
+    const b=document.createElement('button');b.className='range-btn';b.textContent=v;
+    b.onclick=()=>{
+      document.querySelectorAll('#globalRangeRow .range-btn').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      S.rangeUvPerDiv=v;
+      document.getElementById('dataInfo').innerHTML=`包:${S.pktCount} &nbsp; 游标:${scopeCursors[0]} &nbsp; 量程:${S.rangeUvPerDiv}μV/格`;
+      draw();
+    };
+    row.appendChild(b);
+  });
+  row.children[2].classList.add('active'); // 默认200
+}
+
+// ==================== 初始化 ====================
+document.addEventListener('DOMContentLoaded',()=>{
+  preCheck();
+  initScopeBufs();
+  rebuildChannelLabels();
+  buildRangeButtons();
+  recreateFilters();
+  updateUI();
+  resizeCanvas();
+  log('页面已加载，点击「扫描设备」搜索COGNITIVE设备');
+  document.getElementById('scanBtn').onclick=doScan;
+  document.getElementById('connectBtn').onclick=doConnect;
+  document.getElementById('disconnectBtn').onclick=doDisconnect;
+  document.getElementById('startBtn').onclick=doStart;
+  document.getElementById('stopBtn').onclick=doStop;
+  document.getElementById('loadFileBtn').onclick=loadOfflineFile;
+  document.getElementById('fileInput').onchange=handleFileSelect;
+  document.getElementById('exportBtn').onclick=doExport;
+  document.getElementById('clearBtn').onclick=clearSession;
+});
+</script>
+</body>
+</html>
