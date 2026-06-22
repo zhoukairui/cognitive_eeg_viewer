@@ -67,12 +67,9 @@ footer{text-align:center;padding:12px;font-size:0.75rem;opacity:0.7;border-top:1
 <button id="disconnectBtn" class="danger" disabled>断开</button>
 <button id="startBtn" class="success" disabled>开始采集</button>
 <button id="stopBtn" class="danger" disabled>停止采集</button>
-<button id="loadFileBtn" class="warning">加载离线文件</button>
 <button id="exportBtn">导出日志</button>
 <button id="clearBtn">新建会话</button>
 </div>
-<input type="file" id="fileInput" accept=".txt">
-<div class="file-name" id="fileName"></div>
 
 <!-- 滤波 -->
 <div class="filter-panel">
@@ -112,9 +109,9 @@ const CHANNEL_COLORS = ['#ff4444','#44ff44','#4488ff','#ff44ff'];
 const CHANNEL_BG = ['rgba(255,68,68,0.06)','rgba(68,255,68,0.06)','rgba(68,136,255,0.06)','rgba(255,68,255,0.06)'];
 const EEG_FS = 250, SHOW_SECONDS = 10;
 const EEG_POINTS = EEG_FS * SHOW_SECONDS;
-const RANGE_VALUES = [50,100,200,500,1000,2000];
+const RANGE_VALUES = [10,50,100,200,500,1000,2000,5000];
 
-const SERVICE_UUID = "0000ff01-0000-1000-8000-00805f9b34fb";
+const SERVICE_UUID = "000000ff-0000-1000-8000-00805f9b34fb";
 
 const CMD_START    = new Uint8Array([0x00, 0x00, 0x08]);
 const CMD_STOP     = new Uint8Array([0x00, 0x00, 0x0A]);
@@ -208,8 +205,7 @@ function rebuildChannelLabels() {
   for (let i = 0; i < N_CHANNELS; i++) {
     const item = document.createElement('div');
     item.className = 'cl-item';
-    item.innerHTML = `<span class="cl-name" style="color:${CHANNEL_COLORS[i]}">${CHANNEL_NAMES[i]}</span>`
-                   + `<span class="cl-value" id="val${i}">--</span>`;
+    item.innerHTML = `<span class="cl-name" style="color:${CHANNEL_COLORS[i]}">${CHANNEL_NAMES[i]}</span>`;
     div.appendChild(item);
   }
 }
@@ -232,12 +228,16 @@ function resizeCanvas() {
 
 window.addEventListener('resize', resizeCanvas);
 
+// 示波器单次扫描写指针
+let sweepIndex = 0;
+
 // 环形缓冲区（唯一数据源）
 let scopeBufs = [];
 let scopeCursors = [];
 function initScopeBufs() {
   scopeBufs = [];
   scopeCursors = [];
+  sweepIndex = 0;
   for (let i = 0; i < N_CHANNELS; i++) {
     scopeBufs.push(new Float64Array(EEG_POINTS));
     scopeCursors.push(0);
@@ -429,48 +429,30 @@ function drawTimeScale() {
   ctx.restore();
 }
 
-// 绘制通道数据（纯波形，无背景填充）
+// 绘制通道数据 - 示波器重复扫描
+// 扫完一屏后回绕到左侧重新开始，右侧旧数据在新数据到达前保持
 function drawTraces() {
   const x0 = PAD_L * dpr;
-  const x1 = W - X_PAD * dpr;
-  const plotW = x1 - x0;
+  const plotW = W - X_PAD * dpr - x0;
 
   ctx.save();
 
   for (let ch = 0; ch < N_CHANNELS; ch++) {
     const buf = scopeBufs[ch];
-    const cursor = scopeCursors[ch];
     ctx.strokeStyle = CHANNEL_COLORS[ch];
     ctx.lineWidth = 1.2 * dpr;
     ctx.globalAlpha = 0.85;
     ctx.beginPath();
     let first = true;
 
-    // 从 cursor 到末尾（旧数据）
-    if (cursor > 0) {
-      const lenOld = EEG_POINTS - cursor;
-      for (let i = 0; i < lenOld; i++) {
-        const x = x0 + i / EEG_POINTS * plotW;
-        const y = uvToPx(buf[cursor + i], ch);
-        if (first) { ctx.moveTo(x, y); first = false; }
-        else ctx.lineTo(x, y);
-      }
-      // 从 0 到 cursor（新数据）
-      for (let i = 0; i < cursor; i++) {
-        const x = x0 + (lenOld + i) / EEG_POINTS * plotW;
-        const y = uvToPx(buf[i], ch);
-        if (first) { ctx.moveTo(x, y); first = false; }
-        else ctx.lineTo(x, y);
-      }
-    } else {
-      // 未回绕：全部连续
-      for (let i = 0; i < EEG_POINTS; i++) {
-        if (buf[i] === 0 && i === EEG_POINTS - 1) break; // 跳过空白
-        const x = x0 + i / EEG_POINTS * plotW;
-        const y = uvToPx(buf[i], ch);
-        if (first) { ctx.moveTo(x, y); first = false; }
-        else ctx.lineTo(x, y);
-      }
+    // 绘制全屏数据：
+    // - 新扫数据在左侧覆盖旧数据
+    // - 右侧旧数据在未被覆盖前保持不变
+    for (let i = 0; i < EEG_POINTS; i++) {
+      const x = x0 + i / EEG_POINTS * plotW;
+      const y = uvToPx(buf[i], ch);
+      if (first) { ctx.moveTo(x, y); first = false; }
+      else ctx.lineTo(x, y);
     }
     ctx.stroke();
   }
@@ -504,10 +486,17 @@ function draw() {
 
 let redrawPending = false;
 function scheduleRedraw() {
-  if (redrawPending) return;
+  // 数据到达只设标志，由 RAF 主循环统一驱动渲染
   redrawPending = true;
-  requestAnimationFrame(() => { redrawPending = false; draw(); });
 }
+
+// ==================== RAF 主循环（稳定的渲染节拍） ====================
+(function rafLoop() {
+  requestAnimationFrame(rafLoop);
+  if (!redrawPending) return;
+  redrawPending = false;
+  draw();
+})();
 
 // ==================== BLE ====================
 function updateUI() {
@@ -526,6 +515,7 @@ function log(msg){
 }
 
 let rawLog=[];
+let rawLogSavedCount=0;
 
 async function doScan(){
   try{
@@ -535,17 +525,57 @@ async function doScan(){
   }catch(e){if(e.name==='NotAllowedError')log('用户取消选择');else log(`扫描失败: ${e.message}`)}
 }
 
+// async function doConnect(){
+//   if(!S.device)return;
+//   try{
+//     log('连接中...');S.server=await S.device.gatt.connect();
+//     let svc;
+//     try{svc=await S.server.getPrimaryService(SERVICE_UUID);}catch(e){
+//       const svcs=await S.server.getPrimaryServices();
+//       for(const s of svcs){if(s.uuid.toLowerCase()===SERVICE_UUID.toLowerCase()){svc=s;break}}
+//       if(!svc)throw new Error('未找到目标服务 '+SERVICE_UUID);
+//     }
+//     const chars=await svc.getCharacteristics();
+//     for(const ch of chars){
+//       const u=ch.uuid.toLowerCase();
+//       if(u.includes('ff01')||u.includes('ffe1')||u.includes('ffe0')){
+//         if(ch.properties.notify&&!S.notifyCh)S.notifyCh=ch;
+//         if((ch.properties.write||ch.properties.writeWithoutResponse)&&!S.writeCh)S.writeCh=ch;
+//       }
+//     }
+//     if(!S.notifyCh){for(const ch of chars){if(ch.properties.notify){S.notifyCh=ch;break}}}
+//     if(!S.writeCh){for(const ch of chars){if(ch.properties.write||ch.properties.writeWithoutResponse){S.writeCh=ch;break}}}
+//     if(!S.notifyCh)throw new Error('未找到可通知的特征');
+//     if(!S.writeCh)S.writeCh=S.notifyCh;
+//     await S.notifyCh.startNotifications();S.notifyCh.addEventListener('characteristicvaluechanged',onData);
+//     S.connected=true;log(`蓝牙已连接 (通知:${S.notifyCh.uuid} 写入:${S.writeCh.uuid})`);updateUI();
+//   }catch(e){log(`连接失败: ${e.message}`)}
+// }
 async function doConnect(){
   if(!S.device)return;
   try{
-    log('连接中...');S.server=await S.device.gatt.connect();
+    log('连接中...');
+    S.server=await S.device.gatt.connect();
+    // ========== 新增：打印所有服务UUID ==========
+    const allServices = await S.server.getPrimaryServices();
+    log(`设备暴露的所有服务: ${allServices.map(s => s.uuid.toLowerCase()).join(', ')}`);
+    // ===========================================
+    
     let svc;
-    try{svc=await S.server.getPrimaryService(SERVICE_UUID);}catch(e){
+    try{
+      svc=await S.server.getPrimaryService(SERVICE_UUID);
+    }catch(e){
       const svcs=await S.server.getPrimaryServices();
-      for(const s of svcs){if(s.uuid.toLowerCase()===SERVICE_UUID.toLowerCase()){svc=s;break}}
-      if(!svc)throw new Error('未找到目标服务 '+SERVICE_UUID);
+      for(const s of svcs){
+        if(s.uuid.toLowerCase()===SERVICE_UUID.toLowerCase()){
+          svc=s;break
+        }
+      }
+      if(!svc)throw new Error(`未找到目标服务 ${SERVICE_UUID}，设备仅提供: ${allServices.map(s=>s.uuid).join(', ')}`);
     }
     const chars=await svc.getCharacteristics();
+    log(`目标服务下的特征值: ${chars.map(c => `${c.uuid} (notify:${c.properties.notify}, write:${c.properties.write})`).join(', ')}`);
+    
     for(const ch of chars){
       const u=ch.uuid.toLowerCase();
       if(u.includes('ff01')||u.includes('ffe1')||u.includes('ffe0')){
@@ -557,9 +587,14 @@ async function doConnect(){
     if(!S.writeCh){for(const ch of chars){if(ch.properties.write||ch.properties.writeWithoutResponse){S.writeCh=ch;break}}}
     if(!S.notifyCh)throw new Error('未找到可通知的特征');
     if(!S.writeCh)S.writeCh=S.notifyCh;
-    await S.notifyCh.startNotifications();S.notifyCh.addEventListener('characteristicvaluechanged',onData);
-    S.connected=true;log(`蓝牙已连接 (通知:${S.notifyCh.uuid} 写入:${S.writeCh.uuid})`);updateUI();
-  }catch(e){log(`连接失败: ${e.message}`)}
+    await S.notifyCh.startNotifications();
+    S.notifyCh.addEventListener('characteristicvaluechanged',onData);
+    S.connected=true;
+    log(`蓝牙已连接 (通知:${S.notifyCh.uuid} 写入:${S.writeCh.uuid})`);
+    updateUI();
+  }catch(e){
+    log(`连接失败: ${e.message}`)
+  }
 }
 
 function onDC(){S.connected=false;S.collecting=false;S.server=null;S.notifyCh=null;S.writeCh=null;log('蓝牙已断开');updateUI();}
@@ -575,7 +610,7 @@ async function doStop(){await writeCmd(CMD_STOP);await new Promise(r=>setTimeout
 
 function fullReset(){
   for(let i=0;i<N_CHANNELS;i++)scopeBufs[i].fill(0);
-  for(let i=0;i<N_CHANNELS;i++)scopeCursors[i]=0;
+  sweepIndex=0;
   S.pktCount=0;resetFilters();scheduleRedraw();
 }
 
@@ -594,73 +629,43 @@ function onData(ev){
       if(lastComplete>0)eegBuffer.splice(0,lastComplete);
       S.pktCount+=rows.length;
       for(const pkt of rows){
+        // 缓冲区满后回绕到起点，新数据从左到右覆盖旧数据
+        if(sweepIndex >= EEG_POINTS) sweepIndex = 0;
         let vals=pkt.slice();
         for(let ch=0;ch<N_CHANNELS;ch++){
           if(filters[`hp${ch}`])vals[ch]=filters[`hp${ch}`].process(vals[ch]);
           if(filters[`lp${ch}`])vals[ch]=filters[`lp${ch}`].process(vals[ch]);
           if(filters[`notch${ch}`])vals[ch]=filters[`notch${ch}`].process(vals[ch]);
-          scopeBufs[ch][scopeCursors[ch]]=vals[ch];
+          scopeBufs[ch][sweepIndex]=vals[ch];
         }
-        for(let ch=0;ch<N_CHANNELS;ch++){
-          scopeCursors[ch]++;if(scopeCursors[ch]>=EEG_POINTS)scopeCursors[ch]=0;
-        }
+        sweepIndex++;
       }
-      const lastVal=rows[rows.length-1];
-      for(let ch=0;ch<N_CHANNELS;ch++)document.getElementById(`val${ch}`).textContent=lastVal[ch].toFixed(1);
-      document.getElementById('dataInfo').innerHTML=`包:${S.pktCount} &nbsp; 游标:${scopeCursors[0]} &nbsp; 量程:${S.rangeUvPerDiv}μV/格`;
+      document.getElementById('dataInfo').innerHTML=`包:${S.pktCount} &nbsp; Sweep:${sweepIndex}/${EEG_POINTS} &nbsp; 量程:${S.rangeUvPerDiv}μV/格`;
       scheduleRedraw();
     }
   }catch(e){log(`解析错误: ${e.message}`)}
 }
 
-// ==================== 离线文件 ====================
-function loadOfflineFile(){document.getElementById('fileInput').click();}
-function handleFileSelect(ev){
-  const file=ev.target.files[0];if(!file)return;
-  document.getElementById('fileName').textContent='已加载: '+file.name;
-  const reader=new FileReader();
-  reader.onload=function(e){parseOfflineData(e.target.result);};
-  reader.readAsText(file,'utf-8');
-}
-function parseOfflineData(text){
-  fullReset();const lines=text.split('\n');let count=0;
-  for(const line of lines){
-    const sp=line.trim().split(',');if(sp.length<2)continue;
-    const hexStr=sp[1].toUpperCase();
-    for(let i=0;i<hexStr.length;i+=PKT_LEN*2){
-      const pktHex=hexStr.substring(i,i+PKT_LEN*2);if(pktHex.length<PKT_LEN*2)break;
-      if(!pktHex.startsWith('C0'))continue;
-      const bArr=[];for(let j=0;j<pktHex.length;j+=2)bArr.push(parseInt(pktHex.substring(j,j+2),16));
-      if(bArr.length<PKT_LEN||bArr[0]!==0xC0)continue;
-      const eeg=parseEegSinglePacket(bArr.slice(3,15));
-      for(let ch=0;ch<N_CHANNELS;ch++)scopeBufs[ch][count]=eeg[ch];
-      count++;if(count>=EEG_POINTS)break;
-    }if(count>=EEG_POINTS)break;
-  }
-  const wp=count>=EEG_POINTS?0:count;
-  for(let ch=0;ch<N_CHANNELS;ch++)scopeCursors[ch]=wp;
-  log(`已加载 ${count} 个数据点`);scheduleRedraw();
-}
-
 // ==================== 导出 & 清空 ====================
 function doExport(){
-  if(!rawLog.length){log('无数据可导出');return;}
-  const blob=new Blob([rawLog.join('\n')],{type:'text/plain;charset=utf-8'});
+  const newCount = rawLog.length - rawLogSavedCount;
+  if(newCount <= 0){log('无新数据可导出（所有数据已保存）');return;}
+  const toExport = rawLog.slice(rawLogSavedCount);
+  const blob=new Blob([toExport.join('\n')],{type:'text/plain;charset=utf-8'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;
   a.download=`eeg_cognitive_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
   a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
-  log(`导出 ${rawLog.length} 条记录`);
+  rawLogSavedCount = rawLog.length;
+  log(`导出 ${toExport.length} 条记录（共 ${rawLog.length} 条，已保存 ${rawLogSavedCount} 条）`);
 }
 function clearSession(){
   if(!confirm('清除所有数据？'))return;
-  rawLog=[];eegBuffer=[];
+  rawLog=[];rawLogSavedCount=0;eegBuffer=[];
   for(let i=0;i<N_CHANNELS;i++)scopeBufs[i].fill(0);
-  for(let i=0;i<N_CHANNELS;i++)scopeCursors[i]=0;
+  sweepIndex=0;
   S.pktCount=0;resetFilters();
   document.getElementById('dataInfo').innerHTML='等待数据...';
-  document.getElementById('fileName').textContent='';
-  for(let i=0;i<N_CHANNELS;i++)document.getElementById(`val${i}`).textContent='--';
   scheduleRedraw();log('会话已清除');
 }
 
@@ -689,7 +694,7 @@ function buildRangeButtons(){
       document.querySelectorAll('#globalRangeRow .range-btn').forEach(x=>x.classList.remove('active'));
       b.classList.add('active');
       S.rangeUvPerDiv=v;
-      document.getElementById('dataInfo').innerHTML=`包:${S.pktCount} &nbsp; 游标:${scopeCursors[0]} &nbsp; 量程:${S.rangeUvPerDiv}μV/格`;
+      document.getElementById('dataInfo').innerHTML=`包:${S.pktCount} &nbsp; Sweep:${sweepIndex}/${EEG_POINTS} &nbsp; 量程:${S.rangeUvPerDiv}μV/格`;
       draw();
     };
     row.appendChild(b);
@@ -712,8 +717,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('disconnectBtn').onclick=doDisconnect;
   document.getElementById('startBtn').onclick=doStart;
   document.getElementById('stopBtn').onclick=doStop;
-  document.getElementById('loadFileBtn').onclick=loadOfflineFile;
-  document.getElementById('fileInput').onchange=handleFileSelect;
   document.getElementById('exportBtn').onclick=doExport;
   document.getElementById('clearBtn').onclick=clearSession;
 });
