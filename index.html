@@ -124,6 +124,20 @@ const EEG_UV_CONVERT = LSB * 1e-3 * 1e6 * 1e3;
 
 function toSigned24(v) { return v > 8388607 ? v - 16777216 : v; }
 
+// ==================== 本地时间格式化 ====================
+function localISODateTime() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}`;
+}
+
+function localDateTimeForFile() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+}
+
 // ==================== 前置检查 ====================
 function preCheck() {
   const el = document.getElementById('preCheckTip');
@@ -619,7 +633,7 @@ let eegBuffer=[];
 function onData(ev){
   const raw=new Uint8Array(ev.target.value.buffer);
   if(!raw.length)return;
-  rawLog.push(`${new Date().toISOString()},${Array.from(raw).map(x=>x.toString(16).padStart(2,'0')).join('')}`);
+  rawLog.push(`${localISODateTime()},${Array.from(raw).map(x=>x.toString(16).padStart(2,'0')).join('')}`);
   try{
     eegBuffer.push(...raw);
     const rows=parseEegBuffer(eegBuffer);
@@ -654,7 +668,7 @@ function doExport(){
   const blob=new Blob([toExport.join('\n')],{type:'text/plain;charset=utf-8'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;
-  a.download=`eeg_cognitive_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+  a.download=`eeg_cognitive_${localDateTimeForFile()}.txt`;
   a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);
   rawLogSavedCount = rawLog.length;
   log(`导出 ${toExport.length} 条记录（共 ${rawLog.length} 条，已保存 ${rawLogSavedCount} 条）`);
